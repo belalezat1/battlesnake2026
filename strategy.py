@@ -57,20 +57,18 @@ def find_best_food(
             continue
 
         # Check if any enemy is closer or equidistant
-        contested = False
+        closest_enemy = None
         for enemy in state.enemies:
-            enemy_dist = head.manhattan(food)  # Quick estimate
-            # Use manhattan for enemy (cheaper than A*)
             e_dist = enemy.head.manhattan(food)
             if e_dist <= dist:
-                contested = True
+                closest_enemy = enemy
                 break
 
         # Score this food
         score = -dist  # Closer is better
 
-        if contested:
-            if enemy.length >= my_len:
+        if closest_enemy is not None:
+            if closest_enemy.length >= my_len:
                 score -= 20  # Heavily penalize if enemy is bigger
             else:
                 score += 5  # Bonus: we can win the head-on
@@ -128,7 +126,16 @@ def score_move(
 
     # --- Food score ---
     food_score = 0.0
-    food_urgency = max(0.2, 1.0 - me.health / 100.0)
+    # Aggressive food strategy: always pursue food, grow as large as possible
+    # Bigger snake = harder to kill, more head-on wins, more board control
+    if me.health < 20:
+        food_urgency = 3.0  # Critical — will die soon
+    elif me.health < 50:
+        food_urgency = 2.0  # Hungry — prioritize food
+    elif me.health < 80:
+        food_urgency = 1.5  # Proactive — keep health topped up
+    else:
+        food_urgency = 1.0  # Full health — still actively seek food to grow
 
     if state.game_mode == "constrictor":
         food_urgency = 0.0  # No food in constrictor
@@ -136,6 +143,9 @@ def score_move(
     if target_food is not None:
         dist_to_food = pos.manhattan(target_food)
         food_score = (w + h - dist_to_food) * food_urgency
+        # Bonus: we're stepping onto the food
+        if dist_to_food == 0:
+            food_score += 10.0
 
     # --- Aggression score ---
     aggression_score = 0.0
@@ -158,11 +168,11 @@ def score_move(
     max_center_dist = center_x + center_y
     center_score = (max_center_dist - dist_to_center) * 0.15
 
-    # --- Tail chase (when not hunting food) ---
+    # --- Tail chase (only as fallback when no food target) ---
     tail_score = 0.0
-    if food_urgency < 0.5 and state.game_mode != "constrictor":
+    if target_food is None and state.game_mode != "constrictor":
         tail_dist = pos.manhattan(me.tail)
-        tail_score = (w + h - tail_dist) * 0.2
+        tail_score = (w + h - tail_dist) * 0.3
 
     # --- Phase-specific weighting ---
     if phase == "desperation":
@@ -173,6 +183,7 @@ def score_move(
     elif phase == "late":
         return (
             space_score
+            + food_score  # Must still eat to survive
             + territory_score * 2.0
             + aggression_score * 2.0
             + safety_score
