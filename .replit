@@ -1,0 +1,8 @@
+run = "python main.py"
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+run = ["sh", "-c", "gunicorn main:app --bind 0.0.0.0:$PORT --workers 1 --timeout 10"]
+deploymentTarget = "cloudrun"
