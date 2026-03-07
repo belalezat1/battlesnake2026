@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>packet_sniffers — Debug Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #00FF41;
+    font-family: 'Courier New', monospace;
+    padding: 20px;
+  }
+  h1 {
+    font-size: 24px;
+    margin-bottom: 10px;
+    text-shadow: 0 0 10px #00FF41;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #00FF41;
+    padding-bottom: 10px;
+  }
+  .status { font-size: 14px; opacity: 0.7; }
+  .container {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 20px;
+  }
+  canvas {
+    border: 2px solid #00FF41;
+    box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+  }
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  .card {
+    border: 1px solid #00FF4140;
+    padding: 15px;
+    border-radius: 4px;
+    background: #0f0f0f;
+  }
+  .card h3 {
+    font-size: 13px;
+    margin-bottom: 8px;
+    opacity: 0.6;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+  .scores {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .score-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 8px;
+    border-radius: 3px;
+  }
+  .score-item.best { background: #00FF4120; }
+  .bar {
+    height: 20px;
+    background: #00FF41;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 8px #00FF4180;
+  }
+  .bar-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0;
+  }
+  .bar-label { min-width: 50px; font-size: 13px; }
+  .bar-wrap {
+    flex: 1;
+    background: #1a1a1a;
+    height: 20px;
+    border-radius: 2px;
+  }
+  .bar-value { min-width: 60px; text-align: right; font-size: 13px; }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 14px;
+  }
+  .stat-label { opacity: 0.6; }
+  .no-data {
+    text-align: center;
+    padding: 60px;
+    font-size: 18px;
+    opacity: 0.4;
+  }
+  .legend {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    font-size: 12px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>// packet_sniffers debug</h1>
+  <span class="status" id="status">waiting for game data...</span>
+</div>
+
+<div id="no-data" class="no-data">
+  Start a game to see live debug data.<br>
+  The dashboard auto-refreshes every 200ms.
+</div>
+
+<div class="container" id="main" style="display:none;">
+  <canvas id="board" width="440" height="440"></canvas>
+
+  <div class="panel">
+    <div class="card">
+      <h3>Game State</h3>
+      <div class="stat-row"><span class="stat-label">Turn</span><span id="turn">-</span></div>
+      <div class="stat-row"><span class="stat-label">Phase</span><span id="phase">-</span></div>
+      <div class="stat-row"><span class="stat-label">Health</span><span id="health">-</span></div>
+      <div class="stat-row"><span class="stat-label">Length</span><span id="length">-</span></div>
+      <div class="stat-row"><span class="stat-label">Latency</span><span id="latency">-</span></div>
+      <div class="stat-row"><span class="stat-label">Decision</span><span id="decision" style="font-weight:bold;">-</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Heuristic Scores</h3>
+      <div id="heuristic-bars"></div>
+    </div>
+
+    <div class="card">
+      <h3>MCTS Scores</h3>
+      <div id="mcts-bars"></div>
+    </div>
+
+    <div class="card">
+      <h3>Combined Scores</h3>
+      <div id="combined-bars"></div>
+    </div>
+
+    <div class="card">
+      <h3>Legend</h3>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:#00FF41"></div> You</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#FF4444"></div> Enemy</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#FFAA00"></div> Food</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#FF00FF80"></div> Hazard</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+let lastData = null;
+
+function drawBoard(data) {
+  const board = data.board;
+  const w = board.width;
+  const h = board.height;
+  const cellSize = Math.floor(440 / Math.max(w, h));
+  canvas.width = cellSize * w;
+  canvas.height = cellSize * h;
+
+  // Background
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Grid
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= w; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * cellSize, 0);
+    ctx.lineTo(x * cellSize, h * cellSize);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= h; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * cellSize);
+    ctx.lineTo(w * cellSize, y * cellSize);
+    ctx.stroke();
+  }
+
+  // Helper: board coords to canvas coords (flip Y)
+  function toCanvas(bx, by) {
+    return [bx * cellSize, (h - 1 - by) * cellSize];
+  }
+
+  // Hazards
+  for (const hz of board.hazards) {
+    const [cx, cy] = toCanvas(hz.x, hz.y);
+    ctx.fillStyle = '#FF00FF20';
+    ctx.fillRect(cx, cy, cellSize, cellSize);
+  }
+
+  // Food
+  for (const f of board.food) {
+    const [cx, cy] = toCanvas(f.x, f.y);
+    ctx.fillStyle = '#FFAA00';
+    ctx.beginPath();
+    ctx.arc(cx + cellSize/2, cy + cellSize/2, cellSize/3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowColor = '#FFAA00';
+    ctx.shadowBlur = 8;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Snakes
+  for (const snake of board.snakes) {
+    const color = snake.is_me ? '#00FF41' : '#FF4444';
+    const headColor = snake.is_me ? '#00CC33' : '#CC0000';
+
+    // Body
+    for (let i = 1; i < snake.body.length; i++) {
+      const [cx, cy] = toCanvas(snake.body[i].x, snake.body[i].y);
+      ctx.fillStyle = color + '90';
+      ctx.fillRect(cx + 2, cy + 2, cellSize - 4, cellSize - 4);
+    }
+
+    // Head
+    if (snake.body.length > 0) {
+      const [cx, cy] = toCanvas(snake.body[0].x, snake.body[0].y);
+      ctx.fillStyle = headColor;
+      ctx.fillRect(cx + 1, cy + 1, cellSize - 2, cellSize - 2);
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 10;
+      ctx.fillRect(cx + 1, cy + 1, cellSize - 2, cellSize - 2);
+      ctx.shadowBlur = 0;
+
+      // Eyes
+      ctx.fillStyle = '#000';
+      const eyeSize = Math.max(2, cellSize / 8);
+      ctx.fillRect(cx + cellSize * 0.25, cy + cellSize * 0.25, eyeSize, eyeSize);
+      ctx.fillRect(cx + cellSize * 0.65, cy + cellSize * 0.25, eyeSize, eyeSize);
+    }
+  }
+}
+
+function renderBars(containerId, scores, bestMove) {
+  const container = document.getElementById(containerId);
+  if (!scores || Object.keys(scores).length === 0) {
+    container.innerHTML = '<span style="opacity:0.4;font-size:13px;">no data</span>';
+    return;
+  }
+
+  const vals = Object.values(scores);
+  const maxVal = Math.max(...vals.map(Math.abs), 0.01);
+
+  let html = '';
+  for (const [move, score] of Object.entries(scores)) {
+    const pct = Math.max(5, (Math.abs(score) / maxVal) * 100);
+    const isBest = move === bestMove;
+    const barColor = isBest ? '#00FF41' : '#00FF4160';
+    html += `
+      <div class="bar-container">
+        <span class="bar-label" style="${isBest ? 'font-weight:bold;' : ''}">${move}</span>
+        <div class="bar-wrap">
+          <div class="bar" style="width:${pct}%;background:${barColor};"></div>
+        </div>
+        <span class="bar-value">${score.toFixed(2)}</span>
+      </div>`;
+  }
+  container.innerHTML = html;
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/debug/state');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data || !data.board) return;
+
+    document.getElementById('no-data').style.display = 'none';
+    document.getElementById('main').style.display = 'grid';
+
+    document.getElementById('turn').textContent = data.turn;
+    document.getElementById('phase').textContent = data.phase;
+    document.getElementById('health').textContent = data.health;
+    document.getElementById('length').textContent = data.length;
+    document.getElementById('latency').textContent = data.elapsed_ms + 'ms';
+    document.getElementById('decision').textContent = data.best_move.toUpperCase();
+    document.getElementById('status').textContent = `turn ${data.turn} | ${data.elapsed_ms}ms`;
+
+    drawBoard(data);
+    renderBars('heuristic-bars', data.heuristic_scores, data.best_move);
+    renderBars('mcts-bars', data.mcts_scores, data.best_move);
+    renderBars('combined-bars', data.combined_scores, data.best_move);
+
+    lastData = data;
+  } catch (e) {
+    // Silently continue polling
+  }
+}
+
+setInterval(poll, 200);
+poll();
+</script>
+</body>
+</html>
