@@ -1,4 +1,4 @@
-# 🐍 BattleSnake 2026 — Packet Sniffers
+# 🐍 BattleSnake 2026 — Team: Packet Sniffers
 
 **NJIT Hackathon · BattleSnake 2026**
 
