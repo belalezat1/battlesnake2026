@@ -64,4 +64,4 @@ battlesnake2026/
 
 ---
 
-**Team:** Packet Sniffers · **Event:** NJIT Hackathon — BattleSnake 2026 🏆
+
