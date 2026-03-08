@@ -134,11 +134,11 @@ def score_move(
     if me.health < 20:
         food_urgency = 3.0  # Critical — will die soon
     elif me.health < 50:
-        food_urgency = 2.0  # Hungry — prioritize food
+        food_urgency = 1.8  # Hungry — prioritize food
     elif me.health < 80:
-        food_urgency = 1.5  # Proactive — keep health topped up
+        food_urgency = 1.3  # Proactive — keep health topped up
     else:
-        food_urgency = 1.0  # Full health — still actively seek food to grow
+        food_urgency = 0.8  # Full health — still seek food but prefer safety
 
     if state.game_mode == "constrictor":
         food_urgency = 0.0  # No food in constrictor
@@ -148,7 +148,23 @@ def score_move(
         food_score = (w + h - dist_to_food) * food_urgency
         # Bonus: we're stepping onto the food
         if dist_to_food == 0:
-            food_score += 10.0
+            # But check if eating here is safe — eating grows us, tail won't move
+            # Simulate: after eating, our body is 1 longer so space shrinks
+            eat_obstacles = set(obstacles)
+            eat_obstacles.add(pos)  # Our new head
+            # After eating, tail stays (body grows), so add tail back as obstacle
+            if me.tail not in eat_obstacles:
+                eat_obstacles.add(me.tail)
+            eat_space, _ = flood_fill(pos, eat_obstacles, w, h)
+            if eat_space < me.length * 1.5:
+                food_score -= 20.0  # Eating here would trap us!
+            else:
+                food_score += 10.0
+        # Reduce food urgency when we're already much bigger than enemies
+        if state.enemies and me.health > 50:
+            min_enemy_len = min(e.length for e in state.enemies)
+            if me.length > min_enemy_len + 4:
+                food_score *= 0.5  # We're big enough, prioritize safety
 
     # --- Aggression score ---
     aggression_score = 0.0
@@ -161,7 +177,12 @@ def score_move(
     # --- Safety score ---
     safety_score = 0.0
     if pos in danger_squares:
-        safety_score -= 10.0
+        # Heavier penalty if multiple enemies threaten this square
+        threats = sum(
+            1 for e in state.enemies if e.length >= me.length
+            and any(in_bounds(e.head + d, w, h) and e.head + d == pos for _, d in ALL_MOVES)
+        )
+        safety_score -= 10.0 * max(threats, 1)
     if pos in hazards:
         safety_score -= 5.0 if state.game_mode == "royale" else 1.0
 
@@ -207,11 +228,14 @@ def score_move(
             if enemy_space < nearest_enemy.length * 2:
                 hunt_score += 10.0  # We're squeezing them
 
-    # --- Tail chase (only as fallback when no food target) ---
+    # --- Tail chase (fallback safety — tail is always a safe destination) ---
     tail_score = 0.0
-    if target_food is None and state.game_mode != "constrictor":
+    if state.game_mode != "constrictor":
         tail_dist = pos.manhattan(me.tail)
-        tail_score = (w + h - tail_dist) * 0.3
+        if target_food is None:
+            tail_score = (w + h - tail_dist) * 0.5  # Strong pull toward tail
+        elif space < me.length * 3:
+            tail_score = (w + h - tail_dist) * 0.3  # Tight space — keep tail close
 
     # --- Phase-specific weighting ---
     if phase == "desperation":
@@ -221,7 +245,7 @@ def score_move(
         return space_score + food_score * 2.0 + safety_score * 2.0 + center_score + edge_score
     elif phase == "late":
         return (
-            space_score
+            space_score * 1.5  # Space is critical in late game
             + food_score  # Must still eat to survive
             + territory_score * 2.0
             + aggression_score * 2.0
@@ -232,7 +256,7 @@ def score_move(
         )
     else:  # mid
         return (
-            space_score
+            space_score * 1.2  # Space matters more than food in mid game
             + food_score
             + territory_score
             + aggression_score
