@@ -227,8 +227,8 @@ def mcts(
     state: GameState,
     candidate_moves: list[tuple[str, Coord]],
     time_budget_ms: float = 200.0,
-    max_playouts: int = 100,
-    playout_depth: int = 8,
+    max_playouts: int = 50,
+    playout_depth: int = 4,
 ) -> dict[str, float]:
     """Monte Carlo Tree Search over candidate moves.
 

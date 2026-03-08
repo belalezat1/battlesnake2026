@@ -31,7 +31,7 @@ def choose_move(data: dict) -> dict:
 
     # Phase 2: MCTS refinement (use remaining time budget)
     elapsed_ms = (time.time() - start_time) * 1000
-    mcts_budget = max(50.0, 250.0 - elapsed_ms)  # Leave ~200ms buffer before 500ms timeout
+    mcts_budget = max(30.0, 150.0 - elapsed_ms)  # Leave ~350ms buffer before 500ms timeout
 
     obstacles = build_obstacle_set(state)
     safe_moves = get_safe_moves(state, obstacles)

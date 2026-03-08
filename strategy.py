@@ -1,13 +1,14 @@
 """Strategy engine: game phases, food targeting, move scoring."""
 
 from __future__ import annotations
-from game import Coord, GameState
+from game import Coord, GameState, ALL_MOVES
 from board_utils import (
     build_obstacle_set,
     build_hazard_set,
     get_danger_squares,
     get_kill_squares,
     get_safe_moves,
+    in_bounds,
 )
 from pathfinding import astar, flood_fill, flood_fill_time_aware, voronoi
 
@@ -113,7 +114,9 @@ def score_move(
     space = flood_fill_time_aware(pos, obstacles, snake_bodies, w, h)
 
     if space < me.length:
-        space_score = space * 0.3  # Trap risk
+        space_score = space * 0.1  # Severe trap risk — near-zero score
+    elif space < me.length * 2:
+        space_score = space * 0.5  # Tight — could become a trap
     else:
         space_score = float(space)
 
@@ -162,11 +165,47 @@ def score_move(
     if pos in hazards:
         safety_score -= 5.0 if state.game_mode == "royale" else 1.0
 
-    # --- Center score (slight bias for optionality) ---
+    # --- Edge penalty (avoid trapping ourselves against walls) ---
+    edge_score = 0.0
+    on_edge = pos.x == 0 or pos.x == w - 1 or pos.y == 0 or pos.y == h - 1
+    on_corner = (pos.x in (0, w - 1)) and (pos.y in (0, h - 1))
+    if on_corner:
+        edge_score -= 8.0  # Corners are very dangerous
+    elif on_edge:
+        # Count how many escape routes we have from this edge position
+        escape_count = sum(
+            1 for _, d in ALL_MOVES
+            if in_bounds(pos + d, w, h) and (pos + d) not in obstacles
+        )
+        if escape_count <= 1:
+            edge_score -= 15.0  # Dead end on the wall
+        elif escape_count == 2:
+            edge_score -= 5.0  # Limited options on the wall
+        else:
+            edge_score -= 2.0  # General edge penalty
+
+    # --- Center score (bias for optionality) ---
     center_x, center_y = w / 2.0, h / 2.0
     dist_to_center = abs(pos.x - center_x) + abs(pos.y - center_y)
     max_center_dist = center_x + center_y
-    center_score = (max_center_dist - dist_to_center) * 0.15
+    center_score = (max_center_dist - dist_to_center) * 0.3
+
+    # --- Late-game hunt score (use size advantage to cut off enemies) ---
+    hunt_score = 0.0
+    if state.enemies:
+        min_enemy_len = min(e.length for e in state.enemies)
+        size_ratio = me.length / max(min_enemy_len, 1)
+        if size_ratio >= 1.5 and phase in ("late", "mid"):
+            # We're much bigger — move toward nearest enemy to cut them off
+            nearest_enemy = min(state.enemies, key=lambda e: me.head.manhattan(e.head))
+            dist_to_enemy = pos.manhattan(nearest_enemy.head)
+            hunt_score = (w + h - dist_to_enemy) * 0.8
+            # Bonus for moves that reduce enemy flood fill
+            enemy_obstacles = set(obstacles)
+            enemy_obstacles.add(pos)  # Pretend we're there
+            enemy_space, _ = flood_fill(nearest_enemy.head, enemy_obstacles, w, h)
+            if enemy_space < nearest_enemy.length * 2:
+                hunt_score += 10.0  # We're squeezing them
 
     # --- Tail chase (only as fallback when no food target) ---
     tail_score = 0.0
@@ -176,17 +215,19 @@ def score_move(
 
     # --- Phase-specific weighting ---
     if phase == "desperation":
-        # Override: maximize food pursuit
-        return food_score * 5.0 + space_score * 0.5 + safety_score
+        # Override: maximize food pursuit, but still avoid traps
+        return food_score * 5.0 + space_score * 0.5 + safety_score + edge_score
     elif phase == "early":
-        return space_score + food_score * 2.0 + safety_score * 2.0 + center_score
+        return space_score + food_score * 2.0 + safety_score * 2.0 + center_score + edge_score
     elif phase == "late":
         return (
             space_score
             + food_score  # Must still eat to survive
             + territory_score * 2.0
             + aggression_score * 2.0
+            + hunt_score * 2.0  # Leverage size advantage
             + safety_score
+            + edge_score
             + tail_score
         )
     else:  # mid
@@ -195,8 +236,10 @@ def score_move(
             + food_score
             + territory_score
             + aggression_score
+            + hunt_score
             + safety_score
             + center_score
+            + edge_score
             + tail_score
         )
 
